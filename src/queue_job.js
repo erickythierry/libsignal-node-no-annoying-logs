@@ -4,8 +4,7 @@
  * jobQueue manages multiple queues indexed by device to serialize
  * session io ops on the database.
  */
-'use strict';
-
+"use strict";
 
 const _queueAsyncBuckets = new Map();
 const _gcLimit = 10000;
@@ -13,14 +12,17 @@ const _gcLimit = 10000;
 async function _asyncQueueExecutor(queue, cleanup) {
     let offt = 0;
     while (true) {
-        let limit = Math.min(queue.length, _gcLimit); // Break up thundering hurds for GC duty.
+        let limit = Math.min(queue.length, _gcLimit);
         for (let i = offt; i < limit; i++) {
             const job = queue[i];
             try {
-                job.resolve(await job.awaitable());
-            } catch(e) {
+                const result = await job.awaitable();
+                job.resolve(result);
+            } catch (e) {
                 job.reject(e);
             }
+            // Yield to event loop to avoid starving other tasks
+            await new Promise((resolve) => setImmediate(resolve));
         }
         if (limit < queue.length) {
             /* Perform lazy GC of queue for faster iteration. */
@@ -37,17 +39,21 @@ async function _asyncQueueExecutor(queue, cleanup) {
     cleanup();
 }
 
-module.exports = function(bucket, awaitable) {
+module.exports = function (bucket, awaitable) {
     /* Run the async awaitable only when all other async calls registered
      * here have completed (or thrown).  The bucket argument is a hashable
      * key representing the task queue to use. */
     if (!awaitable.name) {
         // Make debuging easier by adding a name to this function.
-        Object.defineProperty(awaitable, 'name', {writable: true});
-        if (typeof bucket === 'string') {
+        Object.defineProperty(awaitable, "name", { writable: true });
+        if (typeof bucket === "string") {
             awaitable.name = bucket;
         } else {
-            console.warn("Unhandled bucket type (for naming):", typeof bucket, bucket);
+            console.warn(
+                "Unhandled bucket type (for naming):",
+                typeof bucket,
+                bucket
+            );
         }
     }
     let inactive;
@@ -56,11 +62,13 @@ module.exports = function(bucket, awaitable) {
         inactive = true;
     }
     const queue = _queueAsyncBuckets.get(bucket);
-    const job = new Promise((resolve, reject) => queue.push({
-        awaitable,
-        resolve,
-        reject
-    }));
+    const job = new Promise((resolve, reject) =>
+        queue.push({
+            awaitable,
+            resolve,
+            reject,
+        })
+    );
     if (inactive) {
         /* An executor is not currently active; Start one now. */
         _asyncQueueExecutor(queue, () => _queueAsyncBuckets.delete(bucket));
