@@ -37,14 +37,13 @@ exports.FingerprintGenerator = void 0;
 const crypto = __importStar(require("./crypto"));
 const VERSION = 0;
 async function iterateHash(data, key, count) {
-    const combined = Buffer.from((new Uint8Array(Buffer.concat([data, key]))).buffer);
-    const result = crypto.hash(combined);
-    if (--count === 0) {
-        return result;
+    let current = data;
+    while (count > 0) {
+        const combined = Buffer.from((new Uint8Array(Buffer.concat([current, key]))).buffer);
+        current = crypto.hash(combined);
+        count--;
     }
-    else {
-        return iterateHash(result, key, count);
-    }
+    return current;
 }
 function shortToArrayBuffer(num) {
     return new Uint16Array([num]).buffer;

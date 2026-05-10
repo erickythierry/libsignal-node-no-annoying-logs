@@ -57,11 +57,7 @@ function queueJob<T>(bucket: unknown, awaitable: Awaitable<T>): Promise<T> {
         if (typeof bucket === "string") {
             (awaitable as Function & { name: string }).name = bucket;
         } else {
-            console.warn(
-                "Unhandled bucket type (for naming):",
-                typeof bucket,
-                bucket
-            );
+            // console.warn("Unhandled bucket type (for naming):", typeof bucket, bucket);
         }
     }
     let inactive = false;

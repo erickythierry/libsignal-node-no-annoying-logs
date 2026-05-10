@@ -94,16 +94,22 @@ function deriveSecrets(input, salt, info, chunks) {
     const infoArray = new Uint8Array(info.byteLength + 1 + 32);
     infoArray.set(info, 32);
     infoArray[infoArray.length - 1] = 1;
-    const signed = [calculateMAC(PRK, Buffer.from(infoArray.slice(32)))];
+    // Views sobre o mesmo ArrayBuffer — evita cópias por chunk.
+    // firstView ignora os 32 bytes iniciais (zerados) na primeira iteração;
+    // fullView usa o buffer inteiro nas iterações seguintes (após sobrescrever
+    // os 32 bytes iniciais com o hash anterior via infoArray.set).
+    const firstView = Buffer.from(infoArray.buffer, infoArray.byteOffset + 32, infoArray.byteLength - 32);
+    const fullView = Buffer.from(infoArray.buffer, infoArray.byteOffset, infoArray.byteLength);
+    const signed = [calculateMAC(PRK, firstView)];
     if (chunks > 1) {
         infoArray.set(signed[signed.length - 1]);
         infoArray[infoArray.length - 1] = 2;
-        signed.push(calculateMAC(PRK, Buffer.from(infoArray)));
+        signed.push(calculateMAC(PRK, fullView));
     }
     if (chunks > 2) {
         infoArray.set(signed[signed.length - 1]);
         infoArray[infoArray.length - 1] = 3;
-        signed.push(calculateMAC(PRK, Buffer.from(infoArray)));
+        signed.push(calculateMAC(PRK, fullView));
     }
     return signed;
 }
@@ -112,7 +118,7 @@ function verifyMAC(data, key, mac, length) {
     if (mac.length !== length || calculatedMac.length !== length) {
         throw new Error("Bad MAC length");
     }
-    if (!mac.equals(calculatedMac)) {
+    if (!nodeCrypto.timingSafeEqual(mac, calculatedMac)) {
         throw new Error("Bad MAC");
     }
 }

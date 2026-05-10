@@ -75,9 +75,7 @@ class SessionBuilder {
             } else {
                 const openSession = record.getOpenSession();
                 if (openSession) {
-                    console.warn(
-                        "Closing stale open session for new outgoing prekey bundle"
-                    );
+                    // console.warn("Closing stale open session for new outgoing prekey bundle");
                     record.closeSession(openSession);
                 }
             }
@@ -85,41 +83,6 @@ class SessionBuilder {
             await this.storage.storeSession(fqAddr, record);
         });
     }
-
-    // async initOutgoing(device) {
-    //     const fqAddr = this.addr.toString();
-    //     return await queueJob(fqAddr, async () => {
-    //         if (!await this.storage.isTrustedIdentity(this.addr.id, device.identityKey)) {
-    //             throw new errors.UntrustedIdentityKeyError(this.addr.id, device.identityKey);
-    //         }
-    //         curve.verifySignature(device.identityKey, device.signedPreKey.publicKey,
-    //                               device.signedPreKey.signature);
-    //         const baseKey = curve.generateKeyPair();
-    //         const devicePreKey = device.preKey && device.preKey.publicKey;
-    //         const session = await this.initSession(true, baseKey, undefined, device.identityKey,
-    //                                                devicePreKey, device.signedPreKey.publicKey,
-    //                                                device.registrationId);
-    //         session.pendingPreKey = {
-    //             signedKeyId: device.signedPreKey.keyId,
-    //             baseKey: baseKey.pubKey
-    //         };
-    //         if (device.preKey) {
-    //             session.pendingPreKey.preKeyId = device.preKey.keyId;
-    //         }
-    //         let record = await this.storage.loadSession(fqAddr);
-    //         if (!record) {
-    //             record = new SessionRecord();
-    //         } else {
-    //             const openSession = record.getOpenSession();
-    //             if (openSession) {
-    //                 console.warn("Closing stale open session for new outgoing prekey bundle");
-    //                 record.closeSession(openSession);
-    //             }
-    //         }
-    //         record.setSession(session);
-    //         await this.storage.storeSession(fqAddr, record);
-    //     });
-    // }
 
     async initIncoming(record: SessionRecord, message: any): Promise<number | undefined> {
         const fqAddr = this.addr.toString();
@@ -147,9 +110,7 @@ class SessionBuilder {
         }
         const existingOpenSession = record.getOpenSession();
         if (existingOpenSession) {
-            console.warn(
-                "Closing open session in favor of incoming prekey bundle"
-            );
+            // console.warn("Closing open session in favor of incoming prekey bundle");
             record.closeSession(existingOpenSession);
         }
         record.setSession(

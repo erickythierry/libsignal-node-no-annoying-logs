@@ -28,8 +28,6 @@ declare class SessionRecord implements SessionRecordLike {
         [base64BaseKey: string]: SessionEntry;
     };
     version: string;
-    oldestKey?: string;
-    oldestSession?: SessionEntry;
     static createEntry(): SessionEntry;
     static migrate(data: any): void;
     static deserialize(data: any): SessionRecord;

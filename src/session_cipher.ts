@@ -10,9 +10,18 @@ import * as curve from './curve';
 import * as errors from './errors';
 import * as protobufs from './protobufs';
 import queueJob from './queue_job';
-import type { Chain, EncryptedMessage, SignalStorage } from './types';
+import type { Chain, EncryptedMessage, KeyPair, SignalStorage } from './types';
 
 const VERSION = 3;
+
+// Constantes reutilizadas em encrypt/decrypt/fillMessageKeys/calculateRatchet.
+// Como buffers nunca são mutados pelas APIs que os recebem aqui,
+// é seguro compartilhar uma única instância por módulo (reduz GC).
+const EMPTY_SALT_32 = Buffer.alloc(32);
+const INFO_WHISPER_MSG_KEYS = Buffer.from("WhisperMessageKeys");
+const INFO_WHISPER_RATCHET = Buffer.from("WhisperRatchet");
+const MSG_KEY_SEED = Buffer.from([1]);
+const CHAIN_KEY_SEED = Buffer.from([2]);
 
 function assertBuffer(value: unknown): Buffer {
     if (!(value instanceof Buffer)) {
@@ -70,7 +79,6 @@ class SessionCipher {
 
     async encrypt(data: Buffer): Promise<EncryptedMessage> {
         assertBuffer(data);
-        const ourIdentityKey = await this.storage.getOurIdentity();
         return await this.queueJob(async () => {
             const record = await this.getRecord();
             if (!record) {
@@ -84,6 +92,7 @@ class SessionCipher {
             if (!await this.storage.isTrustedIdentity(this.addr.id, remoteIdentityKey)) {
                 throw new errors.UntrustedIdentityKeyError(this.addr.id, remoteIdentityKey);
             }
+            const ourIdentityKey = await this.storage.getOurIdentity();
             const chain = session.getChain(session.currentRatchet.ephemeralKeyPair.pubKey);
             if (!chain) {
                 throw new errors.SessionError("No chain for current ephemeral key");
@@ -93,7 +102,7 @@ class SessionCipher {
             }
             this.fillMessageKeys(chain, chain.chainKey.counter + 1);
             const keys = crypto.deriveSecrets(chain.messageKeys[chain.chainKey.counter],
-                                              Buffer.alloc(32), Buffer.from("WhisperMessageKeys"));
+                                              EMPTY_SALT_32, INFO_WHISPER_MSG_KEYS);
             delete chain.messageKeys[chain.chainKey.counter];
             const msg = protobufs.WhisperMessage.create();
             msg.ephemeralKey = session.currentRatchet.ephemeralKeyPair.pubKey;
@@ -144,17 +153,20 @@ class SessionCipher {
         });
     }
 
-    async decryptWithSessions(data: Buffer, sessions: SessionEntry[]): Promise<{ session: SessionEntry; plaintext: Buffer }> {
+    async decryptWithSessions(data: Buffer, sessions: SessionEntry[], ourIdentityKey?: KeyPair): Promise<{ session: SessionEntry; plaintext: Buffer }> {
         // Iterate through the sessions, attempting to decrypt using each one.
         // Stop and return the result if we get a valid result.
         if (!sessions.length) {
             throw new errors.SessionError("No sessions available");
         }
+        // Resolve identidade uma única vez para toda a iteração — antes era
+        // buscada N vezes (uma por tentativa de sessão).
+        const identity = ourIdentityKey ?? await this.storage.getOurIdentity();
         const errs: unknown[] = [];
         for (const session of sessions) {
             let plaintext: Buffer;
             try {
-                plaintext = await this.doDecryptWhisperMessage(data, session);
+                plaintext = await this.doDecryptWhisperMessage(data, session, identity);
                 session.indexInfo.used = Date.now();
                 return {
                     session,
@@ -179,7 +191,8 @@ class SessionCipher {
             if (!record) {
                 throw new errors.SessionError("No session record");
             }
-            const result = await this.decryptWithSessions(data, record.getSessions());
+            const ourIdentityKey = await this.storage.getOurIdentity();
+            const result = await this.decryptWithSessions(data, record.getSessions(), ourIdentityKey);
             const remoteIdentityKey = result.session.indexInfo.remoteIdentityKey;
             if (!await this.storage.isTrustedIdentity(this.addr.id, remoteIdentityKey)) {
                 throw new errors.UntrustedIdentityKeyError(this.addr.id, remoteIdentityKey);
@@ -218,7 +231,8 @@ class SessionCipher {
             if (!session) {
                 throw new errors.SessionError("No session for baseKey after initIncoming");
             }
-            const plaintext = await this.doDecryptWhisperMessage(preKeyProto.message, session);
+            const ourIdentityKey = await this.storage.getOurIdentity();
+            const plaintext = await this.doDecryptWhisperMessage(preKeyProto.message, session, ourIdentityKey);
             await this.storeRecord(record);
             if (preKeyId) {
                 await this.storage.removePreKey(preKeyId);
@@ -227,7 +241,7 @@ class SessionCipher {
         });
     }
 
-    async doDecryptWhisperMessage(messageBuffer: Buffer, session: SessionEntry): Promise<Buffer> {
+    async doDecryptWhisperMessage(messageBuffer: Buffer, session: SessionEntry, ourIdentityKey?: KeyPair): Promise<Buffer> {
         assertBuffer(messageBuffer);
         if (!session) {
             throw new TypeError("session required");
@@ -254,12 +268,12 @@ class SessionCipher {
         }
         const messageKey = chain.messageKeys[message.counter];
         delete chain.messageKeys[message.counter];
-        const keys = crypto.deriveSecrets(messageKey, Buffer.alloc(32),
-                                          Buffer.from("WhisperMessageKeys"));
-        const ourIdentityKey = await this.storage.getOurIdentity();
+        const keys = crypto.deriveSecrets(messageKey, EMPTY_SALT_32, INFO_WHISPER_MSG_KEYS);
+        // Compatibilidade: callers antigos que não passem o terceiro arg continuam funcionando.
+        const identity = ourIdentityKey ?? await this.storage.getOurIdentity();
         const macInput = Buffer.alloc(messageProto.byteLength + (33 * 2) + 1);
         macInput.set(session.indexInfo.remoteIdentityKey);
-        macInput.set(ourIdentityKey.pubKey, 33);
+        macInput.set(identity.pubKey, 33);
         macInput[33 * 2] = this._encodeTupleByte(VERSION, VERSION);
         macInput.set(messageProto, (33 * 2) + 1);
         // This is where we most likely fail if the session is not a match.
@@ -271,20 +285,18 @@ class SessionCipher {
     }
 
     fillMessageKeys(chain: Chain, counter: number): void {
-        if (chain.chainKey.counter >= counter) {
-            return;
-        }
         if (counter - chain.chainKey.counter > 2000) {
             throw new errors.SessionError('Over 2000 messages into the future!');
         }
-        if (chain.chainKey.key === undefined) {
-            throw new errors.SessionError('Chain closed');
+        while (chain.chainKey.counter < counter) {
+            if (chain.chainKey.key === undefined) {
+                throw new errors.SessionError('Chain closed');
+            }
+            const key = chain.chainKey.key;
+            chain.messageKeys[chain.chainKey.counter + 1] = crypto.calculateMAC(key, MSG_KEY_SEED);
+            chain.chainKey.key = crypto.calculateMAC(key, CHAIN_KEY_SEED);
+            chain.chainKey.counter += 1;
         }
-        const key = chain.chainKey.key;
-        chain.messageKeys[chain.chainKey.counter + 1] = crypto.calculateMAC(key, Buffer.from([1]));
-        chain.chainKey.key = crypto.calculateMAC(key, Buffer.from([2]));
-        chain.chainKey.counter += 1;
-        return this.fillMessageKeys(chain, counter);
     }
 
     maybeStepRatchet(session: SessionEntry, remoteKey: Buffer, previousCounter: number): void {
@@ -313,7 +325,7 @@ class SessionCipher {
         const ratchet = session.currentRatchet;
         const sharedSecret = curve.calculateAgreement(remoteKey, ratchet.ephemeralKeyPair.privKey);
         const masterKey = crypto.deriveSecrets(sharedSecret, ratchet.rootKey,
-                                               Buffer.from("WhisperRatchet"), /*chunks*/ 2);
+                                               INFO_WHISPER_RATCHET, /*chunks*/ 2);
         const chainKey = sending ? ratchet.ephemeralKeyPair.pubKey : remoteKey;
         session.addChain(chainKey, {
             messageKeys: {},
