@@ -144,7 +144,10 @@ function calculateSignature(privKey, message) {
     if (!message) {
         throw new Error("Invalid message");
     }
-    return Buffer.from(curveJs.sign(privKey, message));
+    // curve25519-js@0.0.4 declara opt_random como obrigatório no seu .d.ts upstream.
+    // Passamos 64 bytes de aleatoriedade do crypto do Node (XEdDSA randomizado).
+    // Sem isso, consumidores que compilam este .ts diretamente quebram com TS2554.
+    return Buffer.from(curveJs.sign(privKey, message, nodeCrypto.randomBytes(64)));
 }
 function verifySignature(pubKey, msg, sig, isInit) {
     pubKey = scrubPubKeyFormat(pubKey);

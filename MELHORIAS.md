@@ -22,6 +22,7 @@ strict).
 | 6 | Performance | Constantes de módulo para Buffers reutilizáveis | Zero |
 | 7 | Performance | `deriveSecrets` usa views sem cópia | Baixo |
 | 8 | Limpeza | Bloco antigo de `initOutgoing` comentado removido | Zero |
+| 9 | Compatibilidade | `curve.calculateSignature` passa `opt_random` explícito | Zero |
 
 ---
 
@@ -213,6 +214,51 @@ Removido o bloco de ~34 linhas em `src/session_builder.ts` (linhas 87-120 origin
 versão antiga de `initOutgoing` comentada. O histórico está preservado em `git log`.
 
 **Risco:** zero. Apenas remove comentários.
+
+---
+
+## 9. Compatibilidade com TS estrito no consumidor
+
+### Sintoma reportado
+
+Consumidores que compilam diretamente o `.ts` deste pacote (em vez de só consumir o `.js`)
+recebem:
+
+```
+node_modules/libsignal/src/curve.ts:129:32 - error TS2554: Expected 3 arguments, but got 2.
+129     return Buffer.from(curveJs.sign(privKey, message));
+node_modules/curve25519-js/lib/index.d.ts:44:56
+    44 export declare function sign(secretKey: any, msg: any, opt_random: any): Uint8Array;
+```
+
+### Causa
+
+O `.d.ts` upstream de `curve25519-js@0.0.4` declara `opt_random` como **obrigatório** (sem
+`?`). Nosso fork tinha um override local em `src/curve25519-js.d.ts` declarando o `sign`
+com 2 args, então compila aqui. Mas esse override **não é resolvido pelo TS do
+consumidor** — quando ele compila nosso `.ts`, o module resolution acha o `.d.ts` upstream
+e exige os 3 argumentos.
+
+### Correção
+
+```ts
+return Buffer.from(curveJs.sign(privKey, message, nodeCrypto.randomBytes(64)));
+```
+
+Passa 64 bytes de aleatoriedade do `crypto` do Node. Em runtime, `curve25519-js`:
+- Sem `opt_random`: produz Ed25519 determinístico
+- Com `opt_random`: produz XEdDSA randomizado
+
+Ambos são criptograficamente seguros. XEdDSA randomizado é o padrão usado pelo Signal e
+acrescenta proteção contra side-channels que afetariam assinaturas determinísticas. O
+consumidor (WhatsApp/Baileys) verifica signatures, não compara literais — portanto a
+mudança de determinismo é transparente.
+
+O override local `src/curve25519-js.d.ts` também foi atualizado para refletir a assinatura
+de 3 args (com `opt_random?` opcional), mantendo paridade.
+
+**Risco:** zero. Mudança de determinismo da assinatura é semanticamente válida no
+protocolo Signal.
 
 ---
 
