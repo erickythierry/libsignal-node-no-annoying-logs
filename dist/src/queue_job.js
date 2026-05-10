@@ -1,24 +1,22 @@
 // vim: ts=4:sw=4:expandtab
-
 /*
  * jobQueue manages multiple queues indexed by device to serialize
  * session io ops on the database.
  */
 "use strict";
-
 const _queueAsyncBuckets = new Map();
 const _gcLimit = 10000;
-
 async function _asyncQueueExecutor(queue, cleanup) {
     let offt = 0;
     while (true) {
-        let limit = Math.min(queue.length, _gcLimit);
+        const limit = Math.min(queue.length, _gcLimit);
         for (let i = offt; i < limit; i++) {
             const job = queue[i];
             try {
                 const result = await job.awaitable();
                 job.resolve(result);
-            } catch (e) {
+            }
+            catch (e) {
                 job.reject(e);
             }
             // Yield to event loop to avoid starving other tasks
@@ -29,17 +27,18 @@ async function _asyncQueueExecutor(queue, cleanup) {
             if (limit >= _gcLimit) {
                 queue.splice(0, limit);
                 offt = 0;
-            } else {
+            }
+            else {
                 offt = limit;
             }
-        } else {
+        }
+        else {
             break;
         }
     }
     cleanup();
 }
-
-module.exports = function (bucket, awaitable) {
+function queueJob(bucket, awaitable) {
     /* Run the async awaitable only when all other async calls registered
      * here have completed (or thrown).  The bucket argument is a hashable
      * key representing the task queue to use. */
@@ -48,30 +47,26 @@ module.exports = function (bucket, awaitable) {
         Object.defineProperty(awaitable, "name", { writable: true });
         if (typeof bucket === "string") {
             awaitable.name = bucket;
-        } else {
-            console.warn(
-                "Unhandled bucket type (for naming):",
-                typeof bucket,
-                bucket
-            );
+        }
+        else {
+            console.warn("Unhandled bucket type (for naming):", typeof bucket, bucket);
         }
     }
-    let inactive;
+    let inactive = false;
     if (!_queueAsyncBuckets.has(bucket)) {
         _queueAsyncBuckets.set(bucket, []);
         inactive = true;
     }
     const queue = _queueAsyncBuckets.get(bucket);
-    const job = new Promise((resolve, reject) =>
-        queue.push({
-            awaitable,
-            resolve,
-            reject,
-        })
-    );
+    const job = new Promise((resolve, reject) => queue.push({
+        awaitable: awaitable,
+        resolve: resolve,
+        reject,
+    }));
     if (inactive) {
         /* An executor is not currently active; Start one now. */
         _asyncQueueExecutor(queue, () => _queueAsyncBuckets.delete(bucket));
     }
     return job;
-};
+}
+module.exports = queueJob;

@@ -2,19 +2,20 @@
 
 'use strict';
 
-const nodeCrypto = require('crypto');
-const assert = require('assert');
+import * as nodeCrypto from 'crypto';
+import assert from 'assert';
 
 
-function assertBuffer(value) {
+function assertBuffer(value: unknown): Buffer {
     if (!(value instanceof Buffer)) {
-        throw TypeError(`Expected Buffer instead of: ${value.constructor.name}`);
+        const ctorName = (value as any)?.constructor?.name ?? typeof value;
+        throw TypeError(`Expected Buffer instead of: ${ctorName}`);
     }
     return value;
 }
 
 
-function encrypt(key, data, iv) {
+export function encrypt(key: Buffer, data: Buffer, iv: Buffer): Buffer {
     assertBuffer(key);
     assertBuffer(data);
     assertBuffer(iv);
@@ -23,7 +24,7 @@ function encrypt(key, data, iv) {
 }
 
 
-function decrypt(key, data, iv) {
+export function decrypt(key: Buffer, data: Buffer, iv: Buffer): Buffer {
     assertBuffer(key);
     assertBuffer(data);
     assertBuffer(iv);
@@ -32,7 +33,7 @@ function decrypt(key, data, iv) {
 }
 
 
-function calculateMAC(key, data) {
+export function calculateMAC(key: Buffer, data: Buffer): Buffer {
     assertBuffer(key);
     assertBuffer(data);
     const hmac = nodeCrypto.createHmac('sha256', key);
@@ -41,7 +42,7 @@ function calculateMAC(key, data) {
 }
 
 
-function hash(data) {
+export function hash(data: Buffer): Buffer {
     assertBuffer(data);
     const sha512 = nodeCrypto.createHash('sha512');
     sha512.update(data);
@@ -50,7 +51,7 @@ function hash(data) {
 
 
 // Salts always end up being 32 bytes
-function deriveSecrets(input, salt, info, chunks) {
+export function deriveSecrets(input: Buffer, salt: Buffer, info: Buffer, chunks?: number): Buffer[] {
     // Specific implementation of RFC 5869 that only returns the first 3 32-byte chunks
     assertBuffer(input);
     assertBuffer(salt);
@@ -64,7 +65,7 @@ function deriveSecrets(input, salt, info, chunks) {
     const infoArray = new Uint8Array(info.byteLength + 1 + 32);
     infoArray.set(info, 32);
     infoArray[infoArray.length - 1] = 1;
-    const signed = [calculateMAC(PRK, Buffer.from(infoArray.slice(32)))];
+    const signed: Buffer[] = [calculateMAC(PRK, Buffer.from(infoArray.slice(32)))];
     if (chunks > 1) {
         infoArray.set(signed[signed.length - 1]);
         infoArray[infoArray.length - 1] = 2;
@@ -78,7 +79,7 @@ function deriveSecrets(input, salt, info, chunks) {
     return signed;
 }
 
-function verifyMAC(data, key, mac, length) {
+export function verifyMAC(data: Buffer, key: Buffer, mac: Buffer, length: number): void {
     const calculatedMac = calculateMAC(key, data).slice(0, length);
     if (mac.length !== length || calculatedMac.length !== length) {
         throw new Error("Bad MAC length");
@@ -87,12 +88,3 @@ function verifyMAC(data, key, mac, length) {
         throw new Error("Bad MAC");
     }
 }
-
-module.exports = {
-    deriveSecrets,
-    decrypt,
-    encrypt,
-    hash,
-    calculateMAC,
-    verifyMAC
-};

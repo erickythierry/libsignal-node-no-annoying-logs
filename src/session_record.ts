@@ -1,64 +1,78 @@
 // vim: ts=4:sw=4
 
-const BaseKeyType = require('./base_key_type');
+import BaseKeyType from './base_key_type';
+import type {
+    Chain,
+    CurrentRatchet,
+    IndexInfo,
+    PendingPreKey,
+    SessionEntryLike,
+    SessionRecordLike,
+} from './types';
 
 const CLOSED_SESSIONS_MAX = 40;
 const SESSION_RECORD_VERSION = 'v1';
 
-function assertBuffer(value) {
+function assertBuffer(value: unknown): asserts value is Buffer {
     if (!Buffer.isBuffer(value)) {
         throw new TypeError("Buffer required");
     }
 }
 
 
-class SessionEntry {
+class SessionEntry implements SessionEntryLike {
+
+    _chains: { [base64Key: string]: Chain };
+    registrationId?: number;
+    currentRatchet!: CurrentRatchet;
+    indexInfo!: IndexInfo;
+    pendingPreKey?: PendingPreKey;
 
     constructor() {
         this._chains = {};
     }
 
-    toString() {
+    toString(): string {
         const baseKey = this.indexInfo && this.indexInfo.baseKey &&
             this.indexInfo.baseKey.toString('base64');
         return `<SessionEntry [baseKey=${baseKey}]>`;
     }
 
-    inspect() {
+    inspect(): string {
         return this.toString();
     }
 
-    addChain(key, value) {
+    addChain(key: Buffer, value: Chain): void {
         assertBuffer(key);
         const id = key.toString('base64');
-        if (this._chains.hasOwnProperty(id)) {
+        if (Object.prototype.hasOwnProperty.call(this._chains, id)) {
             throw new Error("Overwrite attempt");
         }
         this._chains[id] = value;
     }
 
-    getChain(key) {
+    getChain(key: Buffer): Chain | undefined {
         assertBuffer(key);
         return this._chains[key.toString('base64')];
     }
 
-    deleteChain(key) {
+    deleteChain(key: Buffer): void {
         assertBuffer(key);
         const id = key.toString('base64');
-        if (!this._chains.hasOwnProperty(id)) {
+        if (!Object.prototype.hasOwnProperty.call(this._chains, id)) {
             throw new ReferenceError("Not Found");
         }
         delete this._chains[id];
     }
 
-    *chains() {
+    *chains(): IterableIterator<[Buffer, Chain]> {
         for (const [k, v] of Object.entries(this._chains)) {
             yield [Buffer.from(k, 'base64'), v];
         }
     }
 
-    serialize() {
-        const data = {
+    serialize(): any {
+        const data: any = {
             registrationId: this.registrationId,
             currentRatchet: {
                 ephemeralKeyPair: {
@@ -86,7 +100,7 @@ class SessionEntry {
         return data;
     }
 
-    static deserialize(data) {
+    static deserialize(data: any): SessionEntry {
         const obj = new this();
         obj.registrationId = data.registrationId;
         obj.currentRatchet = {
@@ -109,18 +123,18 @@ class SessionEntry {
         obj._chains = this._deserialize_chains(data._chains);
         if (data.pendingPreKey) {
             obj.pendingPreKey = Object.assign({}, data.pendingPreKey);
-            obj.pendingPreKey.baseKey = Buffer.from(data.pendingPreKey.baseKey, 'base64');
+            obj.pendingPreKey!.baseKey = Buffer.from(data.pendingPreKey.baseKey, 'base64');
         }
         return obj;
     }
 
-    _serialize_chains(chains) {
-        const r = {};
+    _serialize_chains(chains: { [k: string]: Chain }): any {
+        const r: any = {};
         for (const key of Object.keys(chains)) {
             const c = chains[key];
-            const messageKeys = {};
-            for (const [idx, key] of Object.entries(c.messageKeys)) {
-                messageKeys[idx] = key.toString('base64');
+            const messageKeys: { [k: string]: string } = {};
+            for (const [idx, mk] of Object.entries(c.messageKeys)) {
+                messageKeys[idx] = (mk as Buffer).toString('base64');
             }
             r[key] = {
                 chainKey: {
@@ -134,13 +148,13 @@ class SessionEntry {
         return r;
     }
 
-    static _deserialize_chains(chains_data) {
-        const r = {};
+    static _deserialize_chains(chains_data: any): { [k: string]: Chain } {
+        const r: { [k: string]: Chain } = {};
         for (const key of Object.keys(chains_data)) {
             const c = chains_data[key];
-            const messageKeys = {};
-            for (const [idx, key] of Object.entries(c.messageKeys)) {
-                messageKeys[idx] = Buffer.from(key, 'base64');
+            const messageKeys: { [k: number]: Buffer } = {};
+            for (const [idx, mk] of Object.entries(c.messageKeys)) {
+                messageKeys[idx as unknown as number] = Buffer.from(mk as string, 'base64');
             }
             r[key] = {
                 chainKey: {
@@ -157,9 +171,14 @@ class SessionEntry {
 }
 
 
-const migrations = [{
+interface Migration {
+    version: string;
+    migrate: (data: any) => void;
+}
+
+const migrations: Migration[] = [{
     version: 'v1',
-    migrate: function migrateV1(data) {
+    migrate: function migrateV1(data: any) {
         const sessions = data._sessions;
         if (data.registrationId) {
             for (const key in sessions) {
@@ -180,13 +199,19 @@ const migrations = [{
 }];
 
 
-class SessionRecord {
+class SessionRecord implements SessionRecordLike {
 
-    static createEntry() {
+    sessions: { [base64BaseKey: string]: SessionEntry };
+    version: string;
+    // Campos auxiliares usados em removeOldSessions (versão experimental).
+    oldestKey?: string;
+    oldestSession?: SessionEntry;
+
+    static createEntry(): SessionEntry {
         return new SessionEntry();
     }
 
-    static migrate(data) {
+    static migrate(data: any): void {
         let run = (data.version === undefined);
         for (let i = 0; i < migrations.length; ++i) {
             if (run) {
@@ -201,7 +226,7 @@ class SessionRecord {
         }
     }
 
-    static deserialize(data) {
+    static deserialize(data: any): SessionRecord {
         if (data.version !== SESSION_RECORD_VERSION) {
             this.migrate(data);
         }
@@ -219,8 +244,8 @@ class SessionRecord {
         this.version = SESSION_RECORD_VERSION;
     }
 
-    serialize() {
-        const _sessions = {};
+    serialize(): any {
+        const _sessions: { [k: string]: any } = {};
         for (const [key, entry] of Object.entries(this.sessions)) {
             _sessions[key] = entry.serialize();
         }
@@ -230,12 +255,12 @@ class SessionRecord {
         };
     }
 
-    haveOpenSession() {
+    haveOpenSession(): boolean {
         const openSession = this.getOpenSession();
         return (!!openSession && typeof openSession.registrationId === 'number');
     }
 
-    getSession(key) {
+    getSession(key: Buffer): SessionEntry | undefined {
         assertBuffer(key);
         const session = this.sessions[key.toString('base64')];
         if (session && session.indexInfo.baseKeyType === BaseKeyType.OURS) {
@@ -244,19 +269,20 @@ class SessionRecord {
         return session;
     }
 
-    getOpenSession() {
+    getOpenSession(): SessionEntry | undefined {
         for (const session of Object.values(this.sessions)) {
             if (!this.isClosed(session)) {
                 return session;
             }
         }
+        return undefined;
     }
 
-    setSession(session) {
+    setSession(session: SessionEntry): void {
         this.sessions[session.indexInfo.baseKey.toString('base64')] = session;
     }
 
-    getSessions() {
+    getSessions(): SessionEntry[] {
         // Return sessions ordered with most recently used first.
         return Array.from(Object.values(this.sessions)).sort((a, b) => {
             const aUsed = a.indexInfo.used || 0;
@@ -265,7 +291,7 @@ class SessionRecord {
         });
     }
 
-    closeSession(session) {
+    closeSession(session: SessionEntry): void {
         if (this.isClosed(session)) {
             // console.warn("Session already closed", session);
             return;
@@ -274,7 +300,7 @@ class SessionRecord {
         session.indexInfo.closed = Date.now();
     }
 
-    openSession(session) {
+    openSession(session: SessionEntry): void {
         if (!this.isClosed(session)) {
             console.warn("Session already open");
         }
@@ -283,7 +309,7 @@ class SessionRecord {
         session.indexInfo.closed = -1;
     }
 
-    isClosed(session) {
+    isClosed(session: SessionEntry): boolean {
         return session.indexInfo.closed !== -1;
     }
 
@@ -308,9 +334,9 @@ class SessionRecord {
     //     }
     // }
     // teste de melhoria de desempenho
-    removeOldSessions() {
+    removeOldSessions(): void {
         const sessionKeys = Object.keys(this.sessions);
-        const processNext = (index) => {
+        const processNext = (index: number): void => {
             if (index >= sessionKeys.length) return;
             const key = sessionKeys[index];
             const session = this.sessions[key];
@@ -324,11 +350,20 @@ class SessionRecord {
         processNext(0);
     }
 
-    deleteAllSessions() {
+    deleteAllSessions(): void {
         for (const key of Object.keys(this.sessions)) {
             delete this.sessions[key];
         }
     }
 }
 
-module.exports = SessionRecord;
+// Mantém referência ao limite para preservar paridade semântica futura.
+void CLOSED_SESSIONS_MAX;
+
+namespace SessionRecord {
+    export type Entry = SessionEntry;
+}
+
+(SessionRecord as any).SessionEntry = SessionEntry;
+
+export = SessionRecord;

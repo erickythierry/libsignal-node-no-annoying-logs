@@ -6,18 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Fork do `libsignal-node` (implementação do Signal Protocol para Node.js, originalmente de ForstaLabs / Open Whisper Systems). O propósito deste fork, conforme o nome sugere, é remover logs ruidosos do código upstream. É consumido principalmente por projetos WhatsApp (Baileys-like).
 
-Publicado como pacote `libsignal` (campo `main`: `index.js`). Sem suíte de testes, sem script de build de JS — apenas regeneração de protobufs.
+Publicado como pacote `libsignal` (campo `main`: `dist/index.js`). Código-fonte em TypeScript (`index.ts` + `src/*.ts`), compilado para `dist/` via `tsc`. Sem suíte de testes.
 
 ## Comandos
 
 - Instalar deps: `yarn install`
-- Regenerar `src/WhisperTextProtocol.js` a partir do `.proto`: `./generate-proto.sh`
-  (executa `yarn pbjs -t static-module -w commonjs` — só rode se `protos/WhisperTextProtocol.proto` mudar; o arquivo gerado é commitado)
+- Compilar TS → JS: `yarn build` (executa `tsc`, gera `dist/` com `.js` + `.d.ts`). Roda automaticamente em `prepublishOnly`.
+- Regenerar `src/WhisperTextProtocol.js` (+ `.d.ts`) a partir do `.proto`: `./generate-proto.sh`
+  (executa `yarn pbjs -t static-module -w commonjs` e depois `yarn pbts` — só rode se `protos/WhisperTextProtocol.proto` mudar; os arquivos gerados são commitados)
 - Lint: `npx eslint src/` (eslint 6 está em devDependencies, mas não há config dedicada no repo — verificar antes de assumir regras)
+- Type-check sem emitir: `npx tsc --noEmit`
 
 ## Arquitetura
 
-`index.js` é o único ponto de entrada e apenas reexporta módulos de `src/`. Toda a API pública está ali.
+`index.ts` é o único ponto de entrada e apenas reexporta módulos de `src/` (mantendo o shape original via `export = lib`, com `Object.assign` implícito de `errors`). Toda a API pública está ali. O build emite para `dist/index.js`.
+
+Tipos centrais (`KeyPair`, `PreKeyBundle`, `SignalStorage`, `Chain`, etc.) ficam em `src/types.ts`. O contrato do `storage` injetado pelo consumidor está formalizado lá — preferir importar dele a redeclarar inline.
 
 Fluxo conceitual do Signal Protocol implementado aqui:
 

@@ -1,0 +1,37 @@
+"use strict";
+// vim: ts=4:sw=4:expandtab
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PreKeyError = exports.MessageCounterError = exports.SessionError = exports.UntrustedIdentityKeyError = exports.SignalError = void 0;
+class SignalError extends Error {
+}
+exports.SignalError = SignalError;
+class UntrustedIdentityKeyError extends SignalError {
+    constructor(addr, identityKey) {
+        super();
+        this.name = 'UntrustedIdentityKeyError';
+        this.addr = addr;
+        this.identityKey = identityKey;
+    }
+}
+exports.UntrustedIdentityKeyError = UntrustedIdentityKeyError;
+class SessionError extends SignalError {
+    constructor(message) {
+        super(message);
+        this.name = 'SessionError';
+    }
+}
+exports.SessionError = SessionError;
+class MessageCounterError extends SessionError {
+    constructor(message) {
+        super(message);
+        this.name = 'MessageCounterError';
+    }
+}
+exports.MessageCounterError = MessageCounterError;
+class PreKeyError extends SessionError {
+    constructor(message) {
+        super(message);
+        this.name = 'PreKeyError';
+    }
+}
+exports.PreKeyError = PreKeyError;

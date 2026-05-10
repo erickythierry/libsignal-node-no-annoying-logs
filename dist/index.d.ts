@@ -1,0 +1,23 @@
+import * as crypto from './src/crypto';
+import * as curve from './src/curve';
+import * as keyhelper from './src/keyhelper';
+import ProtocolAddress = require('./src/protocol_address');
+import SessionBuilder = require('./src/session_builder');
+import SessionCipher = require('./src/session_cipher');
+import SessionRecord = require('./src/session_record');
+import * as errors from './src/errors';
+declare const lib: {
+    SignalError: typeof errors.SignalError;
+    UntrustedIdentityKeyError: typeof errors.UntrustedIdentityKeyError;
+    SessionError: typeof errors.SessionError;
+    MessageCounterError: typeof errors.MessageCounterError;
+    PreKeyError: typeof errors.PreKeyError;
+    crypto: typeof crypto;
+    curve: typeof curve;
+    keyhelper: typeof keyhelper;
+    ProtocolAddress: typeof ProtocolAddress;
+    SessionBuilder: typeof SessionBuilder;
+    SessionCipher: typeof SessionCipher;
+    SessionRecord: typeof SessionRecord;
+};
+export = lib;

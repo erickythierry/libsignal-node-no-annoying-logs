@@ -1,20 +1,26 @@
 "use strict";
 
-const BaseKeyType = require("./base_key_type");
-const ChainType = require("./chain_type");
-const SessionRecord = require("./session_record");
-const crypto = require("./crypto");
-const curve = require("./curve");
-const errors = require("./errors");
-const queueJob = require("./queue_job");
+import { BaseKeyType } from "./base_key_type";
+import { ChainType } from "./chain_type";
+import SessionRecord = require("./session_record");
+type SessionEntry = SessionRecord.Entry;
+import * as crypto from "./crypto";
+import * as curve from "./curve";
+import * as errors from "./errors";
+import queueJob from "./queue_job";
+import ProtocolAddress from "./protocol_address";
+import type { KeyPair, PreKeyBundle, SignalStorage } from "./types";
 
 class SessionBuilder {
-    constructor(storage, protocolAddress) {
+    addr: ProtocolAddress;
+    storage: SignalStorage;
+
+    constructor(storage: SignalStorage, protocolAddress: ProtocolAddress) {
         this.addr = protocolAddress;
         this.storage = storage;
     }
 
-    async initOutgoing(device) {
+    async initOutgoing(device: PreKeyBundle): Promise<void> {
         const fqAddr = this.addr.toString();
 
         // --- Pré-verificações / crypto (fora da fila) ---
@@ -63,7 +69,7 @@ class SessionBuilder {
 
         // --- Apenas o trecho que modifica o storage fica serializado ---
         return await queueJob(fqAddr, async () => {
-            let record = await this.storage.loadSession(fqAddr);
+            let record = (await this.storage.loadSession(fqAddr)) as SessionRecord | undefined;
             if (!record) {
                 record = new SessionRecord();
             } else {
@@ -115,7 +121,7 @@ class SessionBuilder {
     //     });
     // }
 
-    async initIncoming(record, message) {
+    async initIncoming(record: SessionRecord, message: any): Promise<number | undefined> {
         const fqAddr = this.addr.toString();
         if (
             !(await this.storage.isTrustedIdentity(fqAddr, message.identityKey))
@@ -161,14 +167,14 @@ class SessionBuilder {
     }
 
     async initSession(
-        isInitiator,
-        ourEphemeralKey,
-        ourSignedKey,
-        theirIdentityPubKey,
-        theirEphemeralPubKey,
-        theirSignedPubKey,
-        registrationId
-    ) {
+        isInitiator: boolean,
+        ourEphemeralKey: KeyPair | undefined,
+        ourSignedKey: KeyPair | undefined,
+        theirIdentityPubKey: Buffer,
+        theirEphemeralPubKey: Buffer | undefined,
+        theirSignedPubKey: Buffer | undefined,
+        registrationId: number
+    ): Promise<SessionEntry> {
         if (isInitiator) {
             if (ourSignedKey) {
                 throw new Error("Invalid call to initSession");
@@ -180,27 +186,27 @@ class SessionBuilder {
             }
             theirSignedPubKey = theirEphemeralPubKey;
         }
-        let sharedSecret;
+        let sharedSecret: Uint8Array;
         if (!ourEphemeralKey || !theirEphemeralPubKey) {
             sharedSecret = new Uint8Array(32 * 4);
         } else {
             sharedSecret = new Uint8Array(32 * 5);
         }
-        for (var i = 0; i < 32; i++) {
+        for (let i = 0; i < 32; i++) {
             sharedSecret[i] = 0xff;
         }
         const ourIdentityKey = await this.storage.getOurIdentity();
         const a1 = curve.calculateAgreement(
-            theirSignedPubKey,
+            theirSignedPubKey!,
             ourIdentityKey.privKey
         );
         const a2 = curve.calculateAgreement(
             theirIdentityPubKey,
-            ourSignedKey.privKey
+            ourSignedKey!.privKey
         );
         const a3 = curve.calculateAgreement(
-            theirSignedPubKey,
-            ourSignedKey.privKey
+            theirSignedPubKey!,
+            ourSignedKey!.privKey
         );
         if (isInitiator) {
             sharedSecret.set(new Uint8Array(a1), 32);
@@ -228,8 +234,8 @@ class SessionBuilder {
             rootKey: masterKey[0],
             ephemeralKeyPair: isInitiator
                 ? curve.generateKeyPair()
-                : ourSignedKey,
-            lastRemoteEphemeralKey: theirSignedPubKey,
+                : ourSignedKey!,
+            lastRemoteEphemeralKey: theirSignedPubKey!,
             previousCounter: 0,
         };
         session.indexInfo = {
@@ -237,8 +243,8 @@ class SessionBuilder {
             used: Date.now(),
             remoteIdentityKey: theirIdentityPubKey,
             baseKey: isInitiator
-                ? ourEphemeralKey.pubKey
-                : theirEphemeralPubKey,
+                ? ourEphemeralKey!.pubKey
+                : theirEphemeralPubKey!,
             baseKeyType: isInitiator ? BaseKeyType.OURS : BaseKeyType.THEIRS,
             closed: -1,
         };
@@ -246,12 +252,12 @@ class SessionBuilder {
             // If we're initiating we go ahead and set our first sending ephemeral key now,
             // otherwise we figure it out when we first maybeStepRatchet with the remote's
             // ephemeral key
-            this.calculateSendingRatchet(session, theirSignedPubKey);
+            this.calculateSendingRatchet(session, theirSignedPubKey!);
         }
         return session;
     }
 
-    calculateSendingRatchet(session, remoteKey) {
+    calculateSendingRatchet(session: SessionEntry, remoteKey: Buffer): void {
         const ratchet = session.currentRatchet;
         const sharedSecret = curve.calculateAgreement(
             remoteKey,
@@ -274,4 +280,4 @@ class SessionBuilder {
     }
 }
 
-module.exports = SessionBuilder;
+export = SessionBuilder;

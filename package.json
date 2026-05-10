@@ -1,9 +1,10 @@
 {
   "name": "libsignal",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Open Whisper Systems' libsignal for Node.js",
   "repository": "ForstaLabs/libsignal-node",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "keywords": [
     "signal",
     "whispersystems",
@@ -15,9 +16,15 @@
     "protobufjs": "6.8.8"
   },
   "files": [
-    "src/*"
+    "dist/**/*"
   ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc"
+  },
   "devDependencies": {
-    "eslint": "6.0.1"
+    "@types/node": "^20.11.0",
+    "eslint": "6.0.1",
+    "typescript": "^5.4.0"
   }
 }
