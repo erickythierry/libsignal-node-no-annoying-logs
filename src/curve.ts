@@ -143,5 +143,79 @@ export function verifySignature(pubKey: Buffer, msg: Buffer, sig: Buffer, isInit
     if (!sig || sig.byteLength != 64) {
         throw new Error("Invalid signature");
     }
-    return isInit ? true : curveJs.verify(pubKey, msg, sig);
+    if (isInit) {
+        return true;
+    }
+    // o nativo só confirma; se recusar ou lançar, a decisão é do curve25519-js (rejeição idêntica à de antes)
+    return verifyNative(pubKey, msg, sig) || curveJs.verify(pubKey, msg, sig);
+}
+
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+// BigInt() no lugar de literal 1n: o WSocket compila este arquivo com target ES2018
+const B0 = BigInt(0);
+const B1 = BigInt(1);
+const B8 = BigInt(8);
+const B255 = BigInt(255);
+const BYTE = BigInt(0xff);
+const FIELD_P = (B1 << B255) - BigInt(19);
+const MAX_CACHED_ED_KEYS = 10_000;
+const edKeyCache = new Map<string, nodeCrypto.KeyObject>();
+
+function modPow(base: bigint, exp: bigint): bigint {
+    let result = B1;
+    base %= FIELD_P;
+    while (exp > B0) {
+        if (exp & B1) {
+            result = (result * base) % FIELD_P;
+        }
+        base = (base * base) % FIELD_P;
+        exp >>= B1;
+    }
+    return result;
+}
+
+/** y de Edwards = (u - 1) / (u + 1) mod p, como o convertPublicKey do curve25519-js (inverso de 0 é 0) */
+function montgomeryToEdwards(u: Buffer): Buffer {
+    let x = B0;
+    for (let i = 31; i >= 0; i--) {
+        x = (x << B8) | BigInt(u[i]);
+    }
+    x = (x & ((B1 << B255) - B1)) % FIELD_P;
+    let y = (((x - B1 + FIELD_P) % FIELD_P) * modPow(x + B1, FIELD_P - BigInt(2))) % FIELD_P;
+    const out = Buffer.alloc(32);
+    for (let i = 0; i < 32; i++) {
+        out[i] = Number(y & BYTE);
+        y >>= B8;
+    }
+    return out;
+}
+
+/**
+ * XEdDSA com o Ed25519 nativo do Node: ~0,1 ms contra ~6 ms do curve25519-js em JS puro.
+ * A chave Montgomery vira Edwards com o bit de sinal que vem em sig[63], o mesmo que o curve25519-js faz.
+ */
+export function verifyNative(pubKey: Buffer, msg: Buffer, sig: Buffer): boolean {
+    try {
+        const signBit = sig[63] & 0x80;
+        const cacheKey = pubKey.toString('base64') + signBit;
+        let key = edKeyCache.get(cacheKey);
+        if (!key) {
+            const edPub = montgomeryToEdwards(pubKey);
+            edPub[31] |= signBit;
+            key = nodeCrypto.createPublicKey({
+                key: Buffer.concat([ED25519_SPKI_PREFIX, edPub]),
+                format: 'der',
+                type: 'spki'
+            });
+            if (edKeyCache.size >= MAX_CACHED_ED_KEYS) {
+                edKeyCache.clear();
+            }
+            edKeyCache.set(cacheKey, key);
+        }
+        const edSig = Buffer.from(sig);
+        edSig[63] &= 0x7f;
+        return nodeCrypto.verify(null, msg, key, edSig);
+    } catch {
+        return false;
+    }
 }

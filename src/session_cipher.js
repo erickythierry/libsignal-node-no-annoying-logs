@@ -178,7 +178,11 @@ class SessionCipher {
         // buscada N vezes (uma por tentativa de sessão).
         const identity = ourIdentityKey ?? await this.storage.getOurIdentity();
         const errs = [];
-        for (const session of sessions) {
+        for (const [i, session] of sessions.entries()) {
+            // cada tentativa é CPU pura: com muitas sessões velhas o loop travava de 10 a 52 s
+            if (i > 0) {
+                await new Promise(resolve => setImmediate(resolve));
+            }
             let plaintext;
             try {
                 plaintext = await this.doDecryptWhisperMessage(data, session, identity);
